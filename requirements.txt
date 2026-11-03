@@ -1,0 +1,27 @@
+# call_snp host-side requirements
+#
+# This repository currently contains Bash workflows, not Python modules.
+# Therefore, there are no pip-installable Python runtime dependencies.
+#
+# Do NOT run "pip install -r requirements.txt" expecting to install the
+# bioinformatics tools. Install host-side tools with environment.yml.
+#
+# Stage 1 (FASTQ -> BAM -> GVCF):
+#   - Bash
+#   - Docker Engine
+#   - NVIDIA GPU driver + NVIDIA Container Toolkit
+#   - NVIDIA Clara Parabricks container:
+#       nvcr.io/nvidia/clara/clara-parabricks:4.1.1-1
+#   - BWA
+#   - SAMtools
+#   - GATK 4
+#
+# Stage 2 (GVCF -> genome-wide joint-called VCF):
+#   - Bash >= 4
+#   - GATK 4 (GenomicsDBImport, GenotypeGVCFs, GatherVcfs,
+#     IndexFeatureFile)
+#   - Java runtime compatible with the installed GATK release
+#   - awk, sed, tee, realpath, wc, date, mkdir
+#
+# The exact versions of host tools should be recorded for every analysis.
+# Parabricks is run as a Docker container and is not installed by pip.
