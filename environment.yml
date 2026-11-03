@@ -1,0 +1,13 @@
+name: call-snp
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - bash >=4.0
+  - bwa
+  - samtools
+  - gatk4
+  - openjdk
+  - bcftools
+  - htslib
