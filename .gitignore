@@ -1,0 +1,48 @@
+# Sequencing inputs and generated alignment/calling data
+*.fastq
+*.fastq.gz
+*.fq
+*.fq.gz
+*.bam
+*.bam.bai
+*.bai
+*.cram
+*.cram.crai
+*.crai
+*.g.vcf
+*.g.vcf.gz
+*.g.vcf.gz.tbi
+*.g.vcf.gz.csi
+*.vcf
+*.vcf.gz
+*.vcf.gz.tbi
+*.vcf.gz.csi
+*.bcf
+*.bcf.csi
+
+# Reference indexes (keep source FASTA under controlled data storage)
+*.fai
+*.dict
+*.amb
+*.ann
+*.bwt
+*.pac
+*.sa
+*.012
+*.alt
+
+# Runtime output
+logs/
+tmp/
+output/
+results/
+*.log
+
+# Local environments and editor files
+.venv/
+venv/
+.env
+.env.*
+__pycache__/
+*.py[cod]
+.DS_Store
