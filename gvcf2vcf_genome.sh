@@ -22,8 +22,8 @@ shopt -s nullglob
 DEFAULT_LIST="/data2/chenh/bsa/F2_3WORKSPACE/gvcf/F2_3_hunchi/PP64_REF_gvcf/gvcf_sample.list"
 LIST_FILE="$DEFAULT_LIST"
 
-qunti_name=F2_3
-REF_NAME=PP64
+qunti_name="${QUANTI_NAME:-F2_3}"
+REF_NAME="${REFERENCE_NAME:-PP64}"
 
 REFERENCE="/data2/chenh/bsa/REF/PP64_Cgla_REF/PP64.genome.fa"
 OUTDIR="/data2/chenh/bsa/F2_3WORKSPACE/vcf/260615_PP64_REF_vcf"
