@@ -115,7 +115,7 @@ for sample in "${samples[@]}"; do
                 --volume "$BAM_DIR:/bam" \
                 "$PARABRICKS_IMAGE" pbrun fq2bam \
                 --ref "/reference/$REF_BASE" \
-                --in-fq "/input/${sample}_1_clean.fq.gz" "/input/${sample}_2_clean.fq.gz" "@RG\\tID:${sample}\\tLB:${sample}\\tPL:ILLUMINA\\tSM:${sample}\\tPU:${sample}" \\
+                --in-fq "/input/${sample}_1_clean.fq.gz" "/input/${sample}_2_clean.fq.gz" "@RG\tID:${sample}\tLB:${sample}\tPL:ILLUMINA\tSM:${sample}\tPU:${sample}" \
                 --out-bam "/bam/${sample}.bam"
             [[ -s "$bam_file" ]] || die "fq2bam did not create a non-empty BAM: $bam_file"
             samtools quickcheck -v "$bam_file" || die "BAM failed samtools quickcheck: $bam_file"
