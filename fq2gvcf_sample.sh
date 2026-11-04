@@ -140,7 +140,7 @@ for sample in "${samples[@]}"; do
     fi
 
     [[ -s "${gvcf_file}.tbi" || -s "${gvcf_file}.idx" || -s "${gvcf_file}.csi" ]] || die "GVCF index is missing: $gvcf_file"
-    printf '%s\\t%s\\n' "$sample" "$gvcf_file" >> "$SAMPLE_MAP_TMP"
+    printf '%s\t%s\n' "$sample" "$gvcf_file" >> "$SAMPLE_MAP_TMP"
     echo "[DONE] $sample"
 done
 
