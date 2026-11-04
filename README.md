@@ -1,177 +1,88 @@
 # call_snp
 
-**A reproducible, GPU-accelerated workflow for short-read SNP discovery: FASTQ → BAM → GVCF → genome-wide joint-called VCF.**
+[English](README_EN.md) | **简体中文**
 
-[![Shell](https://img.shields.io/badge/shell-bash-4EAA25)](https://www.gnu.org/software/bash/)
-[![Workflow](https://img.shields.io/badge/workflow-GATK%20%7C%20Parabricks-blue)](https://github.com/chenhao2436/call_snp)
-[![Status](https://img.shields.io/badge/status-alpha-orange)](https://github.com/chenhao2436/call_snp)
-
-**call_snp** is a command-line workflow for processing paired-end sequencing data and performing multi-sample joint genotyping. It currently contains two Bash scripts:
-
-1. `fq2gvcf_sample.sh`: align paired-end FASTQ reads and generate one GVCF per sample using NVIDIA Parabricks.
-2. `gvcf2vcf_genome.sh`: import sample GVCFs into GenomicsDB, run GATK joint genotyping by reference contig, and gather the shards into a genome-wide VCF.
-
-> **Development status: alpha / not yet validated as a turnkey release.** The repository is being prepared for reproducible use. The current FASTQ-to-GVCF script has issues that must be fixed before production use (see [Known issues and validation status](#known-issues-and-validation-status)). Do not launch a large production run using the current script without reviewing and correcting these issues.
-
-## Contents
-
-- [Workflow overview](#workflow-overview)
-- [Software requirements](#software-requirements)
-- [Input files](#input-files)
-- [Installation](#installation)
-- [Step 1: FASTQ to GVCF](#step-1-fastq-to-gvcf)
-- [Step 2: GVCF to genome-wide VCF](#step-2-gvcf-to-genome-wide-vcf)
-- [Output structure](#output-structure)
-- [Resource planning](#resource-planning)
-- [Reproducibility and quality control](#reproducibility-and-quality-control)
-- [Known issues and validation status](#known-issues-and-validation-status)
-- [Troubleshooting](#troubleshooting)
-- [Roadmap](#roadmap)
-- [Citation and contact](#citation-and-contact)
-
-## Workflow overview
+**call_snp** 是面向短读长测序数据的 SNP 变异检测流程，目标路线为：
 
 ```text
-Paired-end FASTQ files
-        |
-        v
-Reference preparation
-(BWA index + FASTA .fai + GATK sequence dictionary)
-        |
-        v
+Paired-end FASTQ
+      |
+      v
 Parabricks fq2bam
-        |
-        v
-Coordinate-sorted BAM
-        |
-        v
+      |
+      v
+BAM
+      |
+      v
 Parabricks HaplotypeCaller (--gvcf)
-        |
-        v
-One GVCF per sample + index
-        |
-        v
-GVCF sample map (sample<TAB>absolute_path)
-        |
-        v
-GATK GenomicsDBImport (per contig)
-        |
-        v
-GATK GenotypeGVCFs (per contig)
-        |
-        v
+      |
+      v
+Per-sample GVCF
+      |
+      v
+GATK GenomicsDBImport
+      |
+      v
+GATK GenotypeGVCFs
+      |
+      v
 GatherVcfs
-        |
-        v
-Genome-wide joint-called VCF + index
+      |
+      v
+Genome-wide joint-called VCF
 ```
 
-The two stages can be run separately. This is useful when read alignment and GVCF generation are performed on a GPU server, while joint genotyping is performed on a separate compute server.
+<badge color="warning">Alpha：需要修复并完成验证</badge>
 
-## Software requirements
+仓库目前包含两个 Bash 脚本：
 
-### Stage 1: FASTQ to GVCF
+1. `fq2gvcf_sample.sh`：使用 NVIDIA Parabricks 对双端 FASTQ 进行比对并生成单样本 GVCF。
+2. `gvcf2vcf_genome.sh`：按参考基因组 contig 导入多个 GVCF，执行联合分型，并合并为全基因组 VCF。
 
-- Linux server.
-- Bash.
-- Docker Engine.
-- NVIDIA GPU and a working NVIDIA Container Toolkit / Docker GPU runtime.
-- NVIDIA Clara Parabricks container. The current script refers to `nvcr.io/nvidia/clara/clara-parabricks:4.1.1-1`.
-- BWA, for reference indexing.
-- SAMtools, for FASTA indexing (the current script's indexing command needs correction; see below).
-- GATK, for creating the reference sequence dictionary.
+两个阶段可以分开运行，例如在 GPU 服务器完成 FASTQ 到 GVCF，再在另一台计算服务器完成联合分型。
 
-### Stage 2: GVCF to VCF
+**重要：当前 FASTQ-to-GVCF 脚本存在路径与索引命令问题，尚不能视为开箱即用的稳定产品。** 大规模分析前必须先修复并用小规模数据验证，具体见[已知问题](#已知问题与验证状态)。
 
-- Linux server.
-- Bash 4 or later (the script uses associative arrays and `mapfile`).
-- GATK 4 with `GenomicsDBImport`, `GenotypeGVCFs`, `GatherVcfs`, and `IndexFeatureFile`.
-- Java runtime compatible with the installed GATK release.
-- Standard command-line utilities: `awk`, `sed`, `tee`, `realpath`, `wc`, `date`, and `mkdir`.
+## 1. 环境要求
 
-The Conda file in this repository provides the host-side command-line environment. Parabricks is distributed and run through Docker, not installed by pip or Conda.
+### 阶段一：FASTQ → GVCF
 
-## Input files
+- Linux 服务器。
+- Bash。
+- Docker Engine。
+- NVIDIA GPU、驱动和 NVIDIA Container Toolkit。
+- NVIDIA Clara Parabricks 镜像。当前脚本使用：
+  `nvcr.io/nvidia/clara/clara-parabricks:4.1.1-1`。
+- BWA：建立参考基因组索引。
+- SAMtools：建立 FASTA 索引。
+- GATK：建立参考序列字典。
 
-### Reference genome
+### 阶段二：GVCF → 全基因组 VCF
 
-Provide a reference FASTA, for example:
+- Linux 服务器，Bash 4 或更高版本。
+- GATK 4：`GenomicsDBImport`、`GenotypeGVCFs`、`GatherVcfs`、`IndexFeatureFile`。
+- 与 GATK 版本兼容的 Java。
+- 常用系统命令：`awk`、`sed`、`tee`、`realpath`、`wc`、`date`、`mkdir`。
 
-```text
-reference/
-├── reference.fa
-├── reference.fa.fai       # created by samtools faidx
-├── reference.dict        # created by gatk CreateSequenceDictionary
-└── BWA index files       # created by bwa index
-```
+仓库的 `environment.yml` 提供宿主机 Conda 环境。Parabricks 通过 Docker 镜像运行，不由 pip 或 Conda 安装。NVIDIA GPU 驱动、Docker 和 Container Toolkit 也需要在宿主机单独配置。
 
-All samples in one joint-calling run must use the **same reference assembly and contig naming convention**. Do not mix references or assemblies in one sample map.
+## 2. 安装
 
-### Paired-end FASTQ files
-
-The current Stage 1 script expects filenames in this pattern:
-
-```text
-{sample}_1_clean.fq.gz
-{sample}_2_clean.fq.gz
-```
-
-The sample identifier must not contain whitespace or tabs. The two files must be paired reads from the same sample.
-
-### Sample list for Stage 1
-
-One sample ID per line, for example:
-
-```text
-Parent_A
-Parent_B
-Pool_Long
-Pool_Round
-```
-
-Blank lines and comment handling are not currently implemented in Stage 1. Use a clean list containing only sample IDs.
-
-### Sample map for Stage 2
-
-Stage 2 requires a tab-delimited, two-column file:
-
-```text
-Parent_A    /absolute/path/to/Parent_A.g.vcf.gz
-Parent_B    /absolute/path/to/Parent_B.g.vcf.gz
-Pool_Long   /absolute/path/to/Pool_Long.g.vcf.gz
-Pool_Round  /absolute/path/to/Pool_Round.g.vcf.gz
-```
-
-Use a literal TAB between the sample name and the path, not spaces. Each path must point to an existing, readable, indexed GVCF. Sample names must be unique.
-
-Example generation command (run in the directory containing the GVCFs):
-
-```bash
-for f in *.g.vcf.gz; do
-    sample=$(basename "$f" .g.vcf.gz)
-    printf '%s\t%s\n' "$sample" "$(realpath "$f")"
-done > gvcf_sample.list
-```
-
-Review the resulting list before starting joint genotyping.
-
-## Installation
-
-Clone the repository:
+克隆仓库：
 
 ```bash
 git clone https://github.com/chenhao2436/call_snp.git
 cd call_snp
 ```
 
-Create the host-side Conda environment:
+创建 Conda 环境：
 
 ```bash
 conda env create -f environment.yml
 conda activate call-snp
 ```
 
-Check the main tools:
+检查软件：
 
 ```bash
 bash --version
@@ -181,55 +92,116 @@ gatk --version
 docker --version
 ```
 
-For GPU-enabled Docker, verify that the host and container runtime can see the GPU:
+检查 GPU 容器是否可用：
 
 ```bash
 nvidia-smi
-docker run --rm --gpus all nvcr.io/nvidia/clara/clara-parabricks:4.1.1-1 nvidia-smi
+docker run --rm --gpus all \
+  nvcr.io/nvidia/clara/clara-parabricks:4.1.1-1 nvidia-smi
 ```
 
-The Parabricks image may require NVIDIA NGC access or prior image authentication. Follow NVIDIA's current container access instructions.
+Parabricks 镜像可能需要 NVIDIA NGC 权限或事先登录认证，请按 NVIDIA 当前的容器访问要求配置。
 
-## Step 1: FASTQ to GVCF
+## 3. 输入文件
 
-### 1. Prepare directories and configuration
+### 3.1 参考基因组
 
-The current script contains hard-coded server paths near the top of `fq2gvcf_sample.sh`. Edit these paths to match your environment:
+准备同一个版本的参考基因组及其索引：
 
-- Reference FASTA.
-- FASTQ input directory.
-- BAM output directory.
-- GVCF output directory.
-- Sample list.
+```text
+reference/
+├── reference.fa
+├── reference.fa.fai       # samtools faidx 生成
+├── reference.dict        # gatk CreateSequenceDictionary 生成
+└── BWA index files        # bwa index 生成
+```
 
-The script currently reads the sample list from its **first positional argument** (`$1`). Pass the sample-list path explicitly.
-
-### 2. Prepare reference indexes
-
-The required reference resources are:
+生成索引的正确命令：
 
 ```bash
-bwa index /path/to/reference.fa
-samtools faidx /path/to/reference.fa
-gatk CreateSequenceDictionary -R /path/to/reference.fa
+bwa index reference.fa
+samtools faidx reference.fa
+gatk CreateSequenceDictionary -R reference.fa
 ```
 
-The current Stage 1 script attempts to run `samtools index` on the FASTA. This is not the correct SAMtools command for creating a FASTA index. Correct this before execution.
+同一次联合分型中的所有样本必须使用相同参考组装版本和 contig 命名方式。不要把不同版本的参考基因组混入同一个 sample map。
 
-### 3. Run the workflow
+### 3.2 双端 FASTQ
 
-After correcting the issues listed below and updating all paths:
+当前阶段一脚本预期文件名格式：
+
+```text
+{sample}_1_clean.fq.gz
+{sample}_2_clean.fq.gz
+```
+
+样本名称不要包含空格或 TAB。每个样本的 R1 和 R2 必须一一对应。
+
+### 3.3 阶段一样本列表
+
+每行一个样本 ID，例如：
+
+```text
+Parent_A
+Parent_B
+Pool_Long
+Pool_Round
+```
+
+当前脚本没有可靠处理空行和注释行的逻辑，请仅使用干净的样本 ID 列表。
+
+### 3.4 阶段二 GVCF sample map
+
+需要一个两列、以 TAB 分隔的文件：
+
+```text
+Parent_A    /absolute/path/to/Parent_A.g.vcf.gz
+Parent_B    /absolute/path/to/Parent_B.g.vcf.gz
+Pool_Long   /absolute/path/to/Pool_Long.g.vcf.gz
+Pool_Round  /absolute/path/to/Pool_Round.g.vcf.gz
+```
+
+样本名与文件绝对路径之间必须是真正的 TAB，而不是空格。每个路径必须指向存在、可读且已经建立索引的 GVCF；样本名不能重复。
+
+在 GVCF 所在目录生成 sample map：
+
+```bash
+for f in *.g.vcf.gz; do
+    sample=$(basename "$f" .g.vcf.gz)
+    printf '%s\\t%s\\n' "$sample" "$(realpath "$f")"
+done > gvcf_sample.list
+```
+
+运行联合分型前，先检查生成的列表和样本顺序。
+
+## 4. 阶段一：FASTQ → GVCF
+
+### 4.1 修改配置路径
+
+当前 `fq2gvcf_sample.sh` 在脚本开头写有服务器绝对路径。运行前需要检查并修改：
+
+- 参考基因组 FASTA 路径。
+- FASTQ 输入目录。
+- BAM 输出目录。
+- GVCF 输出目录。
+- 样本列表路径。
+
+虽然脚本中定义了样本列表变量，但循环实际从第一个位置参数 `$1` 读取样本列表，因此运行时需要显式提供列表文件。
+
+### 4.2 运行命令
+
+**只有在修复本 README 所列问题后，才运行：**
 
 ```bash
 bash fq2gvcf_sample.sh /path/to/sample.list
 ```
 
-The intended per-sample operations are:
+预期每个样本执行：
 
-- Parabricks `fq2bam`: paired-end FASTQ → aligned BAM.
-- Parabricks `haplotypecaller --gvcf`: BAM → single-sample GVCF.
+- Parabricks `fq2bam`：双端 FASTQ → 比对后的 BAM。
+- Parabricks `haplotypecaller --gvcf`：BAM → 单样本 GVCF。
 
-Expected outputs:
+预期文件结构：
 
 ```text
 bam/
@@ -242,73 +214,65 @@ gvcf/
 └── gvcf_sample.list
 ```
 
-The exact output locations are determined by the paths configured in the script.
+具体路径由脚本配置决定。
 
-**Important:** The current script's second Docker command mounts the GVCF directory at `/3` but also uses `/3/${sample}.bam` as its BAM input path. The BAM input should refer to the BAM directory mount. This must be fixed before Stage 1 can run correctly.
+## 5. 阶段二：GVCF → 全基因组联合分型 VCF
 
-## Step 2: GVCF to genome-wide VCF
+### 5.1 检查 GVCF
 
-### 1. Prepare and validate GVCFs
+每个 GVCF 必须完整、可读、基于同一参考基因组，并且具有索引。当前脚本识别 `.tbi`、`.idx` 或 `.csi`。
 
-Every GVCF must be complete, readable, generated against the same reference, and indexed. For compressed GVCFs, a `.tbi`, `.idx`, or `.csi` index is expected by the current script.
-
-If an index is missing, create it with GATK:
+缺少索引时可使用：
 
 ```bash
 gatk IndexFeatureFile -I sample.g.vcf.gz
 ```
 
-### 2. Build the sample map
+### 5.2 运行联合分型
 
-Create a two-column, tab-delimited sample map as described in [Input files](#input-files). Use absolute paths to avoid working-directory ambiguity.
-
-### 3. Run joint genotyping
-
-The script accepts three positional arguments:
+脚本支持三个位置参数：
 
 ```bash
 bash gvcf2vcf_genome.sh [gvcf_list] [reference.fa] [output_directory]
 ```
 
-Example:
+示例：
 
 ```bash
 bash gvcf2vcf_genome.sh \
-    /data/project/gvcf/gvcf_sample.list \
-    /data/reference/reference.fa \
-    /data/project/joint_vcf
+  /data/project/gvcf/gvcf_sample.list \
+  /data/reference/reference.fa \
+  /data/project/joint_vcf
 ```
 
-If arguments are omitted, the script falls back to paths hard-coded in its configuration section. For portable use, pass all three arguments explicitly.
+如不提供参数，脚本会使用配置区中的默认路径。为了可移植性，建议显式传入三个参数。
 
-### 4. Configure compute resources
+### 5.3 资源参数
 
-The following variables are configured near the top of `gvcf2vcf_genome.sh`:
+`gvcf2vcf_genome.sh` 中当前主要参数如下：
 
-| Variable | Meaning | Current default |
+| 参数 | 含义 | 当前默认值 |
 |---|---|---:|
-| `MAX_JOBS` | Number of contigs processed concurrently | 3 |
-| `JAVA_XMX_IMPORT` | Maximum heap for GenomicsDBImport | 20g |
-| `JAVA_XMX_GENOTYPE` | Maximum heap for GenotypeGVCFs | 28g |
-| `JAVA_XMX_GATHER` | Maximum heap for GatherVcfs | 12g |
-| `READER_THREADS` | GVCF reader threads | 4 |
-| `INCLUDE_NON_VARIANT_SITES` | Include non-variant sites | no |
+| `MAX_JOBS` | 并行处理的 contig 数量 | 3 |
+| `JAVA_XMX_IMPORT` | GenomicsDBImport 最大堆内存 | 20g |
+| `JAVA_XMX_GENOTYPE` | GenotypeGVCFs 最大堆内存 | 28g |
+| `JAVA_XMX_GATHER` | GatherVcfs 最大堆内存 | 12g |
+| `READER_THREADS` | GVCF reader 线程数 | 4 |
+| `INCLUDE_NON_VARIANT_SITES` | 是否包含非变异位点 | no |
 
-Adjust these values to the available memory, CPU, storage throughput, and sample count. The defaults are not universal recommendations.
+根据样本量、可用内存、CPU 和存储性能调整。上述数值只是当前脚本默认配置，并不是适用于所有服务器的最佳设置。
 
-### 5. Output
+### 5.4 输出文件
 
-The final file name is constructed from `qunti_name` and `REF_NAME` in the script. The current defaults are:
+当前默认输出文件名由脚本中的 `qunti_name` 和 `REF_NAME` 拼接：
 
 ```text
 F2_3_PP64.genome.joint.vcf.gz
 ```
 
-The script also creates logs, per-contig VCF shards, status flags, temporary directories, a sample map, and interval metadata under the output directory.
+输出目录还包含总日志、每个 contig 的日志、分片 VCF、状态标记、临时目录、sample map 和 interval 元信息。
 
-## Output structure
-
-The Stage 2 output is organized approximately as follows:
+## 6. 输出目录结构
 
 ```text
 output_directory/
@@ -329,113 +293,105 @@ output_directory/
 └── <population>_<reference>.genome.joint.vcf.gz
 ```
 
-The script uses per-contig processing and status files to support skipping completed shards on a subsequent run. Review the log and status directory before treating a run as successful.
+阶段二按参考 FASTA 的 `.fai` 顺序逐个处理 contig，并使用状态文件跳过已完成分片。重跑前仍应检查日志和状态文件，不能只根据某个分片文件存在就认定任务完整成功。
 
-## Resource planning
+## 7. 资源规划与质量控制
 
-Joint genotyping can be memory- and I/O-intensive. Before running a large cohort:
+大样本 GVCF 联合分型会消耗大量内存、临时空间和存储 I/O。运行前：
 
-- Estimate the total size of all GVCFs and available scratch space.
-- Confirm that the output filesystem has enough free space.
-- Start with a low `MAX_JOBS` value and increase only after monitoring memory and I/O.
-- Keep temporary GenomicsDB workspaces on fast local storage when possible.
-- Avoid running multiple large joint-genotyping jobs on the same storage system without resource coordination.
+- 估算 GVCF 总体积和临时磁盘空间。
+- 确认输出文件系统剩余空间。
+- 初次运行将 `MAX_JOBS` 设为较小值，监测资源后再提高并发。
+- 尽可能使用本地高速盘存放临时 GenomicsDB workspace。
+- 避免在同一共享存储上同时运行多个大型联合分型任务。
 
-The script attempts to use `/dev/shm` for scratch and falls back to the output directory's `tmp` folder. Ensure the selected scratch filesystem has sufficient capacity.
+脚本优先尝试使用 `/dev/shm` 作为 scratch，不可用时回退到输出目录的 `tmp`。使用前请确认空间足够。
 
-## Reproducibility and quality control
+每次分析建议记录：
 
-For each analysis, record:
+- 仓库 Git commit 或 release tag。
+- 参考基因组名称、版本和校验和。
+- Parabricks 镜像 tag 和 digest。
+- GATK、BWA、SAMtools、Java、Docker 和 GPU 驱动版本。
+- 样本列表、sample map。
+- 关键资源参数和完整日志。
 
-- Git commit or release tag of `call_snp`.
-- Reference genome name, version, and checksum.
-- Parabricks container tag and digest.
-- GATK, BWA, SAMtools, Java, Docker, and driver versions.
-- Sample-list and sample-map files.
-- Key resource settings and the complete run log.
+下游分析前至少检查：
 
-Before downstream analysis, verify:
+1. 预期的每个样本都有非空 GVCF。
+2. 每个 GVCF 都有有效索引。
+3. sample map 中样本名唯一且数量正确。
+4. 最终 VCF 非空、可读且有索引。
+5. VCF header 中包含预期样本列。
+6. contig 名称与顺序和参考基因组一致。
+7. 样本数和变异统计符合预期。
 
-1. Every expected sample has a non-empty GVCF.
-2. Every GVCF has a valid index.
-3. The sample map contains the expected unique sample IDs.
-4. The final VCF is non-empty, readable, and indexed.
-5. The VCF header contains the expected sample columns.
-6. The contig names and order are consistent with the reference.
-7. The number of samples and key variant statistics are biologically plausible.
+当前仓库只负责变异检测和联合分型，尚未实现变异过滤、SNP-only 提取、BSA、GWAS、功能注释或表达分析。
 
-This repository currently performs variant calling and joint genotyping. It does **not** yet implement variant filtering, SNP-only extraction, BSA analysis, GWAS, functional annotation, or expression analysis.
+## 8. 已知问题与验证状态
 
-## Known issues and validation status
+以下问题来自对当前源码的静态审查，需要在产品稳定发布前修复：
 
-The following items were identified by static inspection of the current scripts. They should be addressed before calling the workflow production-ready.
-
-| Priority | File | Issue | Required action |
+| 优先级 | 文件 | 问题 | 修复建议 |
 |---|---|---|---|
-| Critical | `fq2gvcf_sample.sh` | The standalone text `基础配置` is not a comment and may be executed as a command. | Change it to a comment. |
-| Critical | `fq2gvcf_sample.sh` | `samtools index` is used on a FASTA file. | Use `samtools faidx`. |
-| Critical | `fq2gvcf_sample.sh` | The HaplotypeCaller Docker command points its BAM input to the GVCF mount. | Mount the BAM directory separately and use the correct container path. |
-| High | `fq2gvcf_sample.sh` | Most paths and the Parabricks image are hard-coded. | Add validated command-line options or a configuration file. |
-| High | `fq2gvcf_sample.sh` | The script does not robustly validate FASTQ pairs, sample IDs, tool availability, or output files. | Add preflight checks, strict shell options, logging, and per-sample failure handling. |
-| High | `gvcf2vcf_genome.sh` | Population and reference labels are hard-coded. | Expose them as command-line options or configuration parameters. |
-| High | `gvcf2vcf_genome.sh` | The final `mv` command is unquoted and redundant because the destination is already the configured final path. | Remove it or replace it with a validated, quoted operation. |
-| Medium | Both | No automated test dataset or end-to-end test is included. | Add a small test dataset and documented expected outputs. |
+| P0 | `fq2gvcf_sample.sh` | 独立文本 `基础配置` 不是注释，可能被 Bash 当作命令执行 | 改为注释 |
+| P0 | `fq2gvcf_sample.sh` | 对 FASTA 使用了 `samtools index` | 改为 `samtools faidx` |
+| P0 | `fq2gvcf_sample.sh` | HaplotypeCaller 命令将 BAM 输入指向 GVCF 挂载目录 | 单独挂载 BAM 目录并修正容器内路径 |
+| P1 | `fq2gvcf_sample.sh` | 路径和 Parabricks 镜像写死 | 增加命令行参数或配置文件 |
+| P1 | `fq2gvcf_sample.sh` | FASTQ 配对、样本 ID、工具和输出文件检查不充分 | 增加运行前检查、日志及失败处理 |
+| P1 | `gvcf2vcf_genome.sh` | 群体名与参考名称写死 | 暴露为配置参数 |
+| P1 | `gvcf2vcf_genome.sh` | 最后的 `mv` 未引用变量且目标路径重复 | 删除或改成安全的路径操作 |
+| P2 | 两个脚本 | 没有配套的小型测试数据和端到端测试 | 增加可公开分发的最小测试案例 |
 
-**Validation statement:** This README is based on static inspection of the repository scripts. No end-to-end run, benchmark, or biological validation is claimed.
+**验证声明：** 本 README 根据仓库源码进行静态审查。本次没有执行完整端到端流程，也没有声称通过性能基准或生物学验证。
 
-## Troubleshooting
+## 9. 故障排查
 
-### Docker cannot access the GPU
-
-Check the host GPU driver and Docker GPU runtime:
+### Docker 无法访问 GPU
 
 ```bash
 nvidia-smi
 docker run --rm --gpus all <parabricks-image> nvidia-smi
 ```
 
-### GATK reports a missing reference index or dictionary
-
-Create the FASTA index and sequence dictionary:
+### GATK 提示参考基因组索引或字典缺失
 
 ```bash
 samtools faidx reference.fa
 gatk CreateSequenceDictionary -R reference.fa
 ```
 
-### GATK reports a missing GVCF index
+### GATK 提示 GVCF 索引缺失
 
 ```bash
 gatk IndexFeatureFile -I sample.g.vcf.gz
 ```
 
-### Joint genotyping fails for one contig
+### 某条 contig 联合分型失败
 
-Inspect the corresponding file under `logs/` and the matching `.fail` status flag. Confirm that every GVCF is readable, indexed, and based on the same reference. Check scratch space and Java memory settings before retrying.
+检查 `logs/` 中对应日志和 `status/` 下的 `.fail` 文件；确认 GVCF 可读、索引完整、参考基因组一致，并检查 scratch 空间和 Java 内存设置。
 
-### The final VCF is missing
+### 找不到最终 VCF
 
-The script only gathers shards after all contigs have completed successfully. Check the master log, per-contig logs, and `status/` directory. Do not treat the existence of a partial shard as a completed run.
+只有所有 contig 成功完成后才会进入合并步骤。检查总日志、每个 interval 日志和状态目录，不要把部分分片当作最终结果。
 
-## Roadmap
+## 10. 开发路线
 
-The repository's intended development direction is:
+- [x] FASTQ-to-GVCF 初始脚本（需要修复和验证）。
+- [x] GVCF-to-全基因组 VCF 初始脚本（需要验证）。
+- [ ] 将绝对路径替换为统一配置接口。
+- [ ] 两阶段增加统一的输入预检和日志。
+- [ ] 增加小型可复现测试数据。
+- [ ] 增加版本标签与发布记录。
+- [ ] 接入 BSA 可视化与交互式绘图模块。
+- [ ] 接入转录组基因 ID 转换和绘图脚本。
+- [ ] 接入变异-表达整合与功能注释模块。
 
-- [x] FASTQ-to-GVCF workflow (initial implementation; requires fixes and validation).
-- [x] GVCF-to-genome-wide-VCF workflow (initial implementation; requires validation).
-- [ ] Replace hard-coded paths with a unified configuration interface.
-- [ ] Add preflight validation and structured logs to both stages.
-- [ ] Add a small reproducible test dataset and automated shell tests.
-- [ ] Add release tags and versioned environment documentation.
-- [ ] Add BSA visualization and interactive plotting modules.
-- [ ] Add transcriptome gene-ID conversion and plotting utilities.
-- [ ] Add variant-expression integration and functional annotation modules.
+后续模块属于规划，不代表当前仓库已实现这些功能。
 
-The downstream modules above are planned work, not features currently included in this repository.
+## 引用与反馈
 
-## Citation and contact
-
-If you use this workflow, please cite the software repository and the underlying tools used in your analysis:
+使用本流程时，请引用仓库地址和具体 Git commit，并注明实际使用的软件版本。
 
 - Repository: https://github.com/chenhao2436/call_snp
 - NVIDIA Parabricks: https://docs.nvidia.com/clara/parabricks/
@@ -443,4 +399,4 @@ If you use this workflow, please cite the software repository and the underlying
 - BWA: https://github.com/lh3/bwa
 - SAMtools: https://www.htslib.org/
 
-For bugs and feature requests, please open a GitHub Issue with the command used, relevant log excerpts, software versions, and a minimal description of the input layout. Do not upload human genomic data, credentials, or other sensitive data to public issues.
+提交 Issue 时请提供运行命令、日志片段、软件版本和输入目录结构。不要在公开 Issue 上传人类基因组数据、访问凭证或敏感文件。
