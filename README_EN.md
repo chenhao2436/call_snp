@@ -1,5 +1,7 @@
 # call_snp
 
+[简体中文](README.md) | **English**
+
 **A reproducible, GPU-accelerated workflow for short-read SNP discovery: FASTQ → BAM → GVCF → genome-wide joint-called VCF.**
 
 [![Shell](https://img.shields.io/badge/shell-bash-4EAA25)](https://www.gnu.org/software/bash/)
