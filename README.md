@@ -41,7 +41,7 @@ Genome-wide joint-called VCF
 
 两个阶段可以分开运行，例如在 GPU 服务器完成 FASTQ 到 GVCF，再在另一台计算服务器完成联合分型。
 
-**重要：当前 FASTQ-to-GVCF 脚本存在路径与索引命令问题，尚不能视为开箱即用的稳定产品。** 大规模分析前必须先修复并用小规模数据验证，具体见[已知问题](#已知问题与验证状态)。
+**当前状态：** 阶段一已完成一轮脚本修正，包括通用路径参数、参考索引生成、BAM 挂载路径、Parabricks read group 参数、GVCF 输出参数和输入检查。阶段二也修复了最终文件重复移动的问题，并允许自定义群体/参考标签。不过本次仍未在 GPU 服务器上执行完整端到端测试，建议先用少量样本验证后再进行正式批量分析。
 
 ## 1. 环境要求
 
@@ -176,24 +176,38 @@ done > gvcf_sample.list
 
 ## 4. 阶段一：FASTQ → GVCF
 
-### 4.1 修改配置路径
+### 4.1 使用命令行传入路径
 
-当前 `fq2gvcf_sample.sh` 在脚本开头写有服务器绝对路径。运行前需要检查并修改：
+当前脚本已改为显式参数，不再要求修改脚本中的服务器绝对路径。参数顺序如下：
 
-- 参考基因组 FASTA 路径。
-- FASTQ 输入目录。
-- BAM 输出目录。
-- GVCF 输出目录。
-- 样本列表路径。
+| 参数 | 说明 |
+|---|---|
+| `SAMPLE_LIST` | 每行一个样本 ID，可使用空行和 `#` 注释行 |
+| `REFERENCE.fa` | 参考基因组 FASTA |
+| `FASTQ_DIR` | FASTQ 文件所在目录 |
+| `BAM_DIR` | BAM 输出目录 |
+| `GVCF_DIR` | GVCF 和 sample map 输出目录 |
+| `PARABRICKS_IMAGE` | 可选，Parabricks Docker 镜像，默认 `nvcr.io/nvidia/clara/clara-parabricks:4.1.1-1` |
 
-虽然脚本中定义了样本列表变量，但循环实际从第一个位置参数 `$1` 读取样本列表，因此运行时需要显式提供列表文件。
+样本 ID 仅允许字母、数字、点、下划线和连字符。脚本会检查重复样本、FASTQ 配对文件、必要软件、GPU、Docker 镜像和输出文件。
+
+Parabricks 镜像需要预先拉取到本机；若需要认证，请先登录 NVIDIA NGC：
+
+```bash
+docker pull nvcr.io/nvidia/clara/clara-parabricks:4.1.1-1
+```
 
 ### 4.2 运行命令
 
 **只有在修复本 README 所列问题后，才运行：**
 
 ```bash
-bash fq2gvcf_sample.sh /path/to/sample.list
+bash fq2gvcf_sample.sh \
+  /path/to/sample.list \
+  /path/to/reference.fa \
+  /path/to/fastq \
+  /path/to/bam \
+  /path/to/gvcf
 ```
 
 预期每个样本执行：
@@ -260,7 +274,7 @@ bash gvcf2vcf_genome.sh \
 | `READER_THREADS` | GVCF reader 线程数 | 4 |
 | `INCLUDE_NON_VARIANT_SITES` | 是否包含非变异位点 | no |
 
-根据样本量、可用内存、CPU 和存储性能调整。上述数值只是当前脚本默认配置，并不是适用于所有服务器的最佳设置。
+根据样本量、可用内存、CPU 和存储性能调整。上述数值只是当前脚本默认配置，并不是适用于所有服务器的最佳设置。可通过环境变量 `QUANTI_NAME` 和 `REFERENCE_NAME` 修改最终 VCF 文件名前缀，例如 `QUANTI_NAME=F3 REFERENCE_NAME=Zunla bash gvcf2vcf_genome.sh list.txt ref.fa outdir`。
 
 ### 5.4 输出文件
 
@@ -330,20 +344,23 @@ output_directory/
 
 ## 8. 已知问题与验证状态
 
-以下问题来自对当前源码的静态审查，需要在产品稳定发布前修复：
+本次产品化过程中已经修复以下源码问题：
 
-| 优先级 | 文件 | 问题 | 修复建议 |
-|---|---|---|---|
-| P0 | `fq2gvcf_sample.sh` | 独立文本 `基础配置` 不是注释，可能被 Bash 当作命令执行 | 改为注释 |
-| P0 | `fq2gvcf_sample.sh` | 对 FASTA 使用了 `samtools index` | 改为 `samtools faidx` |
-| P0 | `fq2gvcf_sample.sh` | HaplotypeCaller 命令将 BAM 输入指向 GVCF 挂载目录 | 单独挂载 BAM 目录并修正容器内路径 |
-| P1 | `fq2gvcf_sample.sh` | 路径和 Parabricks 镜像写死 | 增加命令行参数或配置文件 |
-| P1 | `fq2gvcf_sample.sh` | FASTQ 配对、样本 ID、工具和输出文件检查不充分 | 增加运行前检查、日志及失败处理 |
-| P1 | `gvcf2vcf_genome.sh` | 群体名与参考名称写死 | 暴露为配置参数 |
-| P1 | `gvcf2vcf_genome.sh` | 最后的 `mv` 未引用变量且目标路径重复 | 删除或改成安全的路径操作 |
-| P2 | 两个脚本 | 没有配套的小型测试数据和端到端测试 | 增加可公开分发的最小测试案例 |
+| 文件 | 已完成修改 |
+|---|---|
+| `fq2gvcf_sample.sh` | 删除会被 Bash 当作命令执行的裸文本；改用 `samtools faidx`；修正 BAM 目录挂载；修正 Parabricks read group 和 `--out-variants` 参数；改为显式路径参数；增加输入、GPU、工具和输出检查 |
+| `gvcf2vcf_genome.sh` | 删除将最终 VCF 移动到自身路径的冗余 `mv`；群体名和参考标签可通过 `QUANTI_NAME`、`REFERENCE_NAME` 环境变量设置 |
 
-**验证声明：** 本 README 根据仓库源码进行静态审查。本次没有执行完整端到端流程，也没有声称通过性能基准或生物学验证。
+仍需完成的工作：
+
+| 优先级 | 文件 | 未完成事项 |
+|---|---|---|
+| P1 | `fq2gvcf_sample.sh` | 在实际 Parabricks 4.1.1 GPU 环境进行小样本 dry-run / smoke test 和真实数据验证 |
+| P1 | `gvcf2vcf_genome.sh` | 在目标 GATK 版本和目标服务器上验证 GenomicsDBImport、并发、断点重跑和 GatherVcfs |
+| P1 | 两阶段 | 增加可公开分发的小型测试数据和自动化回归测试 |
+| P2 | 两阶段 | 进一步统一配置文件、版本记录和运行报告 |
+
+**验证声明：** 当前修改基于源码审查及 Parabricks 官方命令参数文档；本轮没有在配备 GPU 的服务器上完成端到端变异检测，也没有进行生物学结果验证。不要将静态修复等同于已通过实际运行测试。
 
 ## 9. 故障排查
 
