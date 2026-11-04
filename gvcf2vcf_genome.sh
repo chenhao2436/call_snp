@@ -323,5 +323,3 @@ run_merge
 log "=== DONE ==="
 log "Final VCF: $FINAL_VCF"
 log "Log: $MASTER_LOG"
-
-mv $FINAL_VCF ${OUTDIR}/${qunti_name}_${REF_NAME}.genome.joint.vcf.gz
