@@ -11,7 +11,7 @@
 1. `fq2gvcf_sample.sh`: align paired-end FASTQ reads and generate one GVCF per sample using NVIDIA Parabricks.
 2. `gvcf2vcf_genome.sh`: import sample GVCFs into GenomicsDB, run GATK joint genotyping by reference contig, and gather the shards into a genome-wide VCF.
 
-> **Development status: alpha / not yet validated as a turnkey release.** The repository is being prepared for reproducible use. The current FASTQ-to-GVCF script has issues that must be fixed before production use (see [Known issues and validation status](#known-issues-and-validation-status)). Do not launch a large production run using the current script without reviewing and correcting these issues.
+> **Status: alpha.** Stage 1 has received a portability and correctness pass, including explicit path arguments, reference indexing, BAM mount paths, Parabricks read-group syntax, GVCF output syntax, and preflight checks. Stage 2 no longer attempts to move the final VCF onto itself and allows configurable output labels. However, no full end-to-end run has been performed on a GPU server in this update; validate with a small cohort before production use.
 
 ## Contents
 
@@ -192,17 +192,26 @@ The Parabricks image may require NVIDIA NGC access or prior image authentication
 
 ## Step 1: FASTQ to GVCF
 
-### 1. Prepare directories and configuration
+### 1. Pass paths through the command line
 
-The current script contains hard-coded server paths near the top of `fq2gvcf_sample.sh`. Edit these paths to match your environment:
+The script now accepts explicit paths instead of requiring edits to server-specific defaults:
 
-- Reference FASTA.
-- FASTQ input directory.
-- BAM output directory.
-- GVCF output directory.
-- Sample list.
+| Argument | Description |
+|---|---|
+| `SAMPLE_LIST` | One sample ID per line; blank lines and `#` comments are ignored |
+| `REFERENCE.fa` | Reference genome FASTA |
+| `FASTQ_DIR` | Directory containing FASTQ files |
+| `BAM_DIR` | BAM output directory |
+| `GVCF_DIR` | GVCF and sample-map output directory |
+| `PARABRICKS_IMAGE` | Optional Docker image; defaults to `nvcr.io/nvidia/clara/clara-parabricks:4.1.1-1` |
 
-The script currently reads the sample list from its **first positional argument** (`$1`). Pass the sample-list path explicitly.
+Sample IDs may contain letters, digits, periods, underscores, and hyphens. The script checks duplicate IDs, FASTQ pairs, required tools, GPU visibility, local Docker image availability, and output files.
+
+Pull the Parabricks image before running (authenticate to NVIDIA NGC first if required):
+
+```bash
+docker pull nvcr.io/nvidia/clara/clara-parabricks:4.1.1-1
+```
 
 ### 2. Prepare reference indexes
 
@@ -214,14 +223,19 @@ samtools faidx /path/to/reference.fa
 gatk CreateSequenceDictionary -R /path/to/reference.fa
 ```
 
-The current Stage 1 script attempts to run `samtools index` on the FASTA. This is not the correct SAMtools command for creating a FASTA index. Correct this before execution.
+The script creates the FASTA index with `samtools faidx`, the BWA index with `bwa index`, and the GATK sequence dictionary with `gatk CreateSequenceDictionary` when they are missing.
 
 ### 3. Run the workflow
 
 After correcting the issues listed below and updating all paths:
 
 ```bash
-bash fq2gvcf_sample.sh /path/to/sample.list
+bash fq2gvcf_sample.sh \
+    /path/to/sample.list \
+    /path/to/reference.fa \
+    /path/to/fastq \
+    /path/to/bam \
+    /path/to/gvcf
 ```
 
 The intended per-sample operations are:
@@ -244,7 +258,7 @@ gvcf/
 
 The exact output locations are determined by the paths configured in the script.
 
-**Important:** The current script's second Docker command mounts the GVCF directory at `/3` but also uses `/3/${sample}.bam` as its BAM input path. The BAM input should refer to the BAM directory mount. This must be fixed before Stage 1 can run correctly.
+The script now mounts FASTQ, reference, BAM, and GVCF directories separately. HaplotypeCaller reads the BAM from the BAM mount and writes the GVCF to the GVCF mount. The command passes read-group metadata as an optional value following `--in-fq` and uses Parabricks `--out-variants` for the output. Existing BAMs are checked with `samtools quickcheck`; existing GVCFs are reused and indexed if needed.
 
 ## Step 2: GVCF to genome-wide VCF
 
@@ -294,7 +308,7 @@ The following variables are configured near the top of `gvcf2vcf_genome.sh`:
 | `READER_THREADS` | GVCF reader threads | 4 |
 | `INCLUDE_NON_VARIANT_SITES` | Include non-variant sites | no |
 
-Adjust these values to the available memory, CPU, storage throughput, and sample count. The defaults are not universal recommendations.
+Adjust these values to the available memory, CPU, storage throughput, and sample count. The defaults are not universal recommendations. Set `QUANTI_NAME` and `REFERENCE_NAME` environment variables to customize the final VCF filename prefix, for example: `QUANTI_NAME=F3 REFERENCE_NAME=Zunla bash gvcf2vcf_genome.sh list.txt ref.fa outdir`.
 
 ### 5. Output
 
@@ -368,20 +382,23 @@ This repository currently performs variant calling and joint genotyping. It does
 
 ## Known issues and validation status
 
-The following items were identified by static inspection of the current scripts. They should be addressed before calling the workflow production-ready.
+The following source issues were fixed during this productization pass:
 
-| Priority | File | Issue | Required action |
-|---|---|---|---|
-| Critical | `fq2gvcf_sample.sh` | The standalone text `基础配置` is not a comment and may be executed as a command. | Change it to a comment. |
-| Critical | `fq2gvcf_sample.sh` | `samtools index` is used on a FASTA file. | Use `samtools faidx`. |
-| Critical | `fq2gvcf_sample.sh` | The HaplotypeCaller Docker command points its BAM input to the GVCF mount. | Mount the BAM directory separately and use the correct container path. |
-| High | `fq2gvcf_sample.sh` | Most paths and the Parabricks image are hard-coded. | Add validated command-line options or a configuration file. |
-| High | `fq2gvcf_sample.sh` | The script does not robustly validate FASTQ pairs, sample IDs, tool availability, or output files. | Add preflight checks, strict shell options, logging, and per-sample failure handling. |
-| High | `gvcf2vcf_genome.sh` | Population and reference labels are hard-coded. | Expose them as command-line options or configuration parameters. |
-| High | `gvcf2vcf_genome.sh` | The final `mv` command is unquoted and redundant because the destination is already the configured final path. | Remove it or replace it with a validated, quoted operation. |
-| Medium | Both | No automated test dataset or end-to-end test is included. | Add a small test dataset and documented expected outputs. |
+| File | Changes made |
+|---|---|
+| `fq2gvcf_sample.sh` | Removed a bare text line that could be executed as a command; switched to `samtools faidx`; corrected the BAM mount; corrected Parabricks read-group and `--out-variants` syntax; added explicit path arguments and input/GPU/tool/output checks |
+| `gvcf2vcf_genome.sh` | Removed a redundant `mv` that moved the final VCF onto itself; made population and reference filename labels configurable through `QUANTI_NAME` and `REFERENCE_NAME` |
 
-**Validation statement:** This README is based on static inspection of the repository scripts. No end-to-end run, benchmark, or biological validation is claimed.
+Remaining work:
+
+| Priority | File | Remaining validation |
+|---|---|---|
+| P1 | `fq2gvcf_sample.sh` | Run a small smoke test and a real-data validation on a GPU server with the target Parabricks 4.1.1 image |
+| P1 | `gvcf2vcf_genome.sh` | Validate GenomicsDBImport, concurrency, restart behavior, and GatherVcfs with the target GATK version and server |
+| P1 | Both stages | Add a small redistributable test dataset and automated regression tests |
+| P2 | Both stages | Further unify configuration, version recording, and run reports |
+
+**Validation statement:** The changes are based on source inspection and NVIDIA's official Parabricks command documentation. No end-to-end variant-calling run on a GPU server or biological validation was performed as part of this update. Static fixes must not be interpreted as a successful production run.
 
 ## Troubleshooting
 
