@@ -115,8 +115,7 @@ for sample in "${samples[@]}"; do
                 --volume "$BAM_DIR:/bam" \
                 "$PARABRICKS_IMAGE" pbrun fq2bam \
                 --ref "/reference/$REF_BASE" \
-                --in-fq "/input/${sample}_1_clean.fq.gz" "/input/${sample}_2_clean.fq.gz" \
-                --read-group "@RG\\tID:${sample}\\tLB:${sample}\\tPL:ILLUMINA\\tSM:${sample}\\tPU:${sample}" \
+                --in-fq "/input/${sample}_1_clean.fq.gz" "/input/${sample}_2_clean.fq.gz" "@RG\\tID:${sample}\\tLB:${sample}\\tPL:ILLUMINA\\tSM:${sample}\\tPU:${sample}" \\
                 --out-bam "/bam/${sample}.bam"
             [[ -s "$bam_file" ]] || die "fq2bam did not create a non-empty BAM: $bam_file"
             samtools quickcheck -v "$bam_file" || die "BAM failed samtools quickcheck: $bam_file"
@@ -131,7 +130,7 @@ for sample in "${samples[@]}"; do
             --ref "/reference/$REF_BASE" \
             --in-bam "/bam/${sample}.bam" \
             --gvcf \
-            --out-variant "/gvcf/${sample}.g.vcf.gz"
+            --out-variants "/gvcf/${sample}.g.vcf.gz"
         [[ -s "$gvcf_file" ]] || die "HaplotypeCaller did not create a non-empty GVCF: $gvcf_file"
 
         if [[ ! -s "${gvcf_file}.tbi" && ! -s "${gvcf_file}.idx" && ! -s "${gvcf_file}.csi" ]]; then
